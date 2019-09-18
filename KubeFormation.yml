@@ -1,0 +1,381 @@
+### Check README.md for details
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      -
+        Label:
+          default: "Instance Size Configuration"
+        Parameters:
+          - NATInstanceType
+          - KNodeInstanceType
+      -
+        Label:
+          default: "Environment Configuration"
+        Parameters:
+          - PubKeyName
+Parameters:
+  NATInstanceType:
+    Type: String
+    Default: t2.nano
+  KNodeInstanceType:
+    Type: String
+    Default: t2.micro
+  PubKeyName:
+    Type: String
+    Default: SolutionFormationPublicKey
+
+Mappings:
+  RegionMap:
+    us-east-1:
+      AMALINUX: ami-0080e4c5bc078760e
+      NATAMI: ami-00a9d4a05375b2763
+    us-east-2:
+      AMALINUX: ami-0cd3dfa4e37921605
+      NATAMI: ami-00d1f8201864cc10c
+    us-west-1:
+      AMALINUX: ami-0ec6517f6edbf8044
+      NATAMI: ami-097ad469381034fa2
+    us-west-2:
+      AMALINUX: ami-01e24be29428c15b2
+      NATAMI: ami-0b840e8a1ce4cdf15
+    sa-east-1:
+      AMALINUX: ami-05145e0b28ad8e0b2
+      NATAMI: ami-057f5d52ff7ae75ae
+    ca-central-1:
+      AMALINUX: ami-07423fb63ea0a0930
+      NATAMI: ami-0b32354309da5bba5
+    eu-west-1:
+      AMALINUX: ami-08935252a36e25f85
+      NATAMI: ami-024107e3e3217a248
+    eu-west-2:
+      AMALINUX: ami-01419b804382064e4
+      NATAMI: ami-0ca65a55561666293
+    eu-west-3:
+      AMALINUX: ami-0dd7e7ed60da8fb83
+      NATAMI: ami-0641e4dfc1427f114
+    eu-central-1:
+      AMALINUX: ami-0cfbf4f6db41068ac
+      NATAMI: ami-06a5303d47fbd8c60
+    ap-southeast-1:
+      AMALINUX: ami-05b3bcf7f311194b3
+      NATAMI: ami-01514bb1776d5c018
+    ap-southeast-2:
+      AMALINUX: ami-02fd0b06f06d93dfc
+      NATAMI: ami-062c04ec46aecd204
+    ap-northeast-1:
+      AMALINUX: ami-00a5245b4816c38e6
+      NATAMI: ami-00d29e4cb217ae06b
+    ap-northeast-2:
+      AMALINUX: ami-00dc207f8ba6dc919
+      NATAMI: ami-0d98591cbf9ef1ffd
+    ap-south-1:
+      AMALINUX: ami-0ad42f4f66f6c1cc9
+      NATAMI: ami-00b3aa8a93dd09c13
+      
+Resources:
+  EC2InstanceIAMRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: "InstallerIAMRole"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: "Allow"
+            Action:
+              - "sts:AssumeRole"
+            Principal:
+              Service:
+                - "ec2.amazonaws.com"
+      Path: "/"
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonEC2ReadOnlyAccess       # This allows EC2 instances to fetch ip address of other EC2 instance through aws cli
+
+# Instance Profile to assign to all EC2 instance created in this solution to avoid permission issues.
+  EC2InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      InstanceProfileName: "InstallerIAMRole"
+      Path: "/"
+      Roles:
+        - Ref: EC2InstanceIAMRole
+  KubeNodeStackVPC:
+    Type: AWS::EC2::VPC
+    Properties:
+       CidrBlock: 10.0.0.0/26
+       EnableDnsSupport: true
+       EnableDnsHostnames: true
+       Tags:
+        - Key: Name
+          Value: Solution Stack VPC
+  KubeNodeStackIGW:
+    Type: AWS::EC2::InternetGateway
+    DependsOn: KubeNodeStackVPC
+  AttachGateway:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref KubeNodeStackVPC
+      InternetGatewayId: !Ref KubeNodeStackIGW
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref KubeNodeStackVPC
+      Tags:
+       - Key: Name
+         Value: Public Route Table
+# Public Route directs outgoing traffic to Internet Gateway
+  PublicRoute1:
+    Type: AWS::EC2::Route
+    DependsOn: AttachGateway
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref KubeNodeStackIGW
+  JumpHostSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      VpcId: !Ref KubeNodeStackVPC
+      GroupDescription: Jumpbox Security Group
+      SecurityGroupEgress:
+      - CidrIp: 0.0.0.0/0
+        IpProtocol: -1
+      SecurityGroupIngress:
+      - IpProtocol: tcp
+        CidrIp: 0.0.0.0/0
+        ToPort: 22
+        FromPort: 22
+      - IpProtocol: tcp
+        CidrIp: 10.0.0.0/26
+        ToPort: 80
+        FromPort: 80
+      - IpProtocol: tcp
+        CidrIp: 0.0.0.0/0
+        ToPort: 443
+        FromPort: 443
+      - IpProtocol: icmp
+        FromPort: 8
+        ToPort: -1
+        CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Name
+          Value: Jumpbox Security Group 
+
+# NAT Instance is in public subnet; cluster nodes are in private subnet
+  PublicSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref KubeNodeStackVPC
+      CidrBlock: 10.0.0.0/28
+      MapPublicIpOnLaunch: true
+      AvailabilityZone:
+        Fn::Select:
+          - 1
+          - Fn::GetAZs: ''
+      Tags:
+        - Key: Name
+          Value: Public Subnet for Jumpbox
+  KNodeSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref KubeNodeStackVPC
+      CidrBlock: 10.0.0.16/28
+      MapPublicIpOnLaunch: false
+      AvailabilityZone:
+        Fn::Select:
+          - 1
+          - Fn::GetAZs: ''
+      Tags:
+        - Key: Name
+          Value: KNode Subnet
+
+  PublicSubnetAssociationWithRouteTable:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      SubnetId: !Ref PublicSubnet
+
+# NAT instance is placed in public subnet and must be based off a NAT image (not a regular Amazon Linux Image!). Security group should allow ICPM and SourceDestCheck must be turned off.
+# The instruction also mentions that the route table pointing to NAT instance should be the main route table of VPC, it does not seem to matter though.
+  NATInstance:
+    Type: AWS::EC2::Instance
+    Properties:
+      ImageId: !FindInMap [RegionMap, !Ref "AWS::Region", NATAMI]
+      InstanceType: !Ref NATInstanceType
+      IamInstanceProfile: !Ref EC2InstanceProfile
+      KeyName: !Ref PubKeyName
+      SubnetId:  !Ref PublicSubnet 
+      SecurityGroupIds:  
+        - !Ref JumpHostSecurityGroup
+      SourceDestCheck: false
+      Tags:
+        - Key: Name
+          Value: NAT Instance
+      UserData:             # NAT instance only needs to configure aws cli environment. 
+        "Fn::Base64":       # UserData must be encoded in Base64
+          !Sub |
+            yum -y update
+            aws configure set region ${AWS::Region}
+            runuser -l ec2-user -c 'aws configure set region ${AWS::Region}'
+  PrivateRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref KubeNodeStackVPC
+
+# Once NAT Instance has been created, add route for private subnet to connect to outside through NAT instance.
+  PrivateRoute1:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      InstanceId: !Ref NATInstance
+  KNodeSubnetAssociationWithRouteTable:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable
+      SubnetId: !Ref KNodeSubnet
+
+# Private Security Group. More ports to open here based on k8s nodes.
+  PrivateSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      VpcId: !Ref KubeNodeStackVPC
+      GroupDescription: Private Security Group for kubernetes nodes
+      SecurityGroupEgress:
+      - CidrIp: 0.0.0.0/0
+        IpProtocol: -1
+      SecurityGroupIngress:
+      - IpProtocol: tcp
+        CidrIp: 0.0.0.0/0
+        ToPort: 22
+        FromPort: 22
+      - IpProtocol: icmp
+        FromPort: 8
+        ToPort: -1
+        CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Name
+          Value: Private Security Group for kubernetes nodes
+
+# EndPoint Security Group (traffic through private link is encrypted with SSL)
+  EndPointSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      VpcId: !Ref KubeNodeStackVPC
+      GroupDescription: Traffic into VPC Endpoint
+      SecurityGroupIngress:
+      - IpProtocol: tcp
+        CidrIp: 0.0.0.0/0
+        ToPort: 443
+        FromPort: 443
+      Tags:
+        - Key: Name
+          Value: Endpoint Security Group
+
+# CfnEndpoint is a means for private instance to signal AWS CloudFormation WaitConditions through AWS private link, without requiring NAT instance.
+# https://aws.amazon.com/blogs/mt/signaling-aws-cloudformation-waitconditions-using-aws-privatelink/
+  CfnEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId: !Ref KubeNodeStackVPC
+      ServiceName: !Sub "com.amazonaws.${AWS::Region}.cloudformation"
+      VpcEndpointType: "Interface"
+      PrivateDnsEnabled: true
+      SubnetIds:
+        - !Ref KNodeSubnet
+      SecurityGroupIds:
+        - !Ref EndPointSecurityGroup
+
+# calling cfn-init from user data allows the EC2 instance, upon launching, to execute configsets defined in metadata of the same resource
+# cfn-hup allows CloudFormation::Init to be executed upon stack updates (using triggers=post.update).
+
+# To troubleshoot AWS::CloudFormation::Init, manually run the following on the server with correct stack name
+  KNodeLaunchTemplate:
+    Type: AWS::EC2::LaunchTemplate
+    DependsOn:
+      - CfnEndpoint
+    Properties:
+      LaunchTemplateName: KubernetesNodeLaunchTemplate
+      LaunchTemplateData:
+        ImageId: !FindInMap [RegionMap, !Ref "AWS::Region", AMALINUX]
+        InstanceType: !Ref KNodeInstanceType
+        IamInstanceProfile:
+          Name: !Ref EC2InstanceProfile
+        KeyName: !Ref PubKeyName
+        NetworkInterfaces:
+          - AssociatePublicIpAddress: false
+            SubnetId: !Ref KNodeSubnet
+            DeviceIndex: 0
+            Groups:
+              - !Ref PrivateSecurityGroup
+        UserData:
+          "Fn::Base64":
+            !Sub |
+              #!/bin/bash
+              aws configure set region ${AWS::Region}
+              runuser -l ec2-user -c 'aws configure set region ${AWS::Region}'
+              yum update -y aws-cfn-bootstrap
+              yum -y update
+              /opt/aws/bin/cfn-init -v --stack ${AWS::StackName} --resource KNodeLaunchTemplate --configsets kube_node_prep
+    Metadata:
+      AWS::CloudFormation::Init:
+        configSets:
+          kube_node_prep:
+            - "configure_cfn"
+            - "prepare_install"
+            - "install_node"
+        configure_cfn:
+          files:
+            /etc/cfn/hooks.d/cfn-auto-reloader.conf:
+              content: !Sub |
+                [cfn-auto-reloader-hook]
+                triggers=post.update
+                path=Resources.KNodeLaunchTemplate.Metadata.AWS::CloudFormation::Init
+                action=/opt/aws/bin/cfn-init -v --stack ${AWS::StackName} --resource KNodeLaunchTemplate --configsets kube_node_prep
+              mode: "000400"
+              owner: root
+              group: root
+            /etc/cfn/cfn-hup.conf:
+              content: !Sub |
+                [main]
+                stack=${AWS::StackId}
+                region=${AWS::Region}
+                verbose=true
+                interval=5
+              mode: "000400"
+              owner: root
+              group: root
+          services:
+            sysvinit:
+              cfn-hup:
+                enabled: "true"
+                ensureRunning: "true"
+                files:
+                  - "/etc/cfn/cfn-hup.conf"
+                  - "/etc/cfn/hooks.d/cfn-auto-reloader.conf"
+        prepare_install:
+          packages:
+            yum:
+              jq: []
+        install_node:
+          commands:
+            01_print_nodes_info:
+              cwd: "/home/ec2-user"
+            02_launch_install_coordinator:
+              cwd: "/home/ec2-user"
+              
+  KNodeInstance:
+    DependsOn:
+      - NATInstance
+      - KNodeLaunchTemplate
+    Type: AWS::EC2::Instance
+    Properties:
+      LaunchTemplate:
+        LaunchTemplateName: KubernetesNodeLaunchTemplate
+        Version: !GetAtt KNodeLaunchTemplate.LatestVersionNumber
+      Tags:
+        - Key: Name
+          Value: Kubernetes Node
+
+Outputs:
+  BastionHostInfo:
+    Description: Baston Host address
+    Value: !Join ["", ["ssh ec2-user@", !GetAtt NATInstance.PublicIp]]
