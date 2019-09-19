@@ -16,7 +16,7 @@ Metadata:
 Parameters:
   NATInstanceType:
     Type: String
-    Default: t2.nano
+    Default: t2.micro
   KNodeInstanceType:
     Type: String
     Default: t2.micro
@@ -89,7 +89,18 @@ Resources:
       Path: "/"
       ManagedPolicyArns:
         - arn:aws:iam::aws:policy/AmazonEC2ReadOnlyAccess       # This allows EC2 instances to fetch ip address of other EC2 instance through aws cli
-
+      Policies:
+        - PolicyName: AllowKeyPairMangement
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: "Allow"
+                Action: 
+                  - "ec2:ImportKeyPair",
+                  - "ec2:CreateKeyPair"
+                  - "ec2:DescribeKeyPairs"
+                  - "ec2:DeleteKeyPair"
+                Resource: "*"
 # Instance Profile to assign to all EC2 instance created in this solution to avoid permission issues.
   EC2InstanceProfile:
     Type: AWS::IAM::InstanceProfile
@@ -212,9 +223,23 @@ Resources:
       UserData:             # NAT instance only needs to configure aws cli environment. 
         "Fn::Base64":       # UserData must be encoded in Base64
           !Sub |
+            #!/bin/bash
+            yum-config-manager --enable epel
             yum -y update
             aws configure set region ${AWS::Region}
             runuser -l ec2-user -c 'aws configure set region ${AWS::Region}'
+            /opt/aws/bin/cfn-init -v --stack ${AWS::StackName} --resource NATInstance --configsets bastion_host
+            /opt/aws/bin/cfn-signal -e $? --stack ${AWS::StackName} --resource NATInstance
+    Metadata:
+      AWS::CloudFormation::Init:
+        configSets:
+          bastion_host:
+            - "install_pkg"
+        install_pkg:
+          packages:
+            yum:
+              jq: []
+              ansible: []
   PrivateRouteTable:
     Type: AWS::EC2::RouteTable
     Properties:

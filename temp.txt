@@ -1,0 +1,2 @@
+aws ec2 create-key-pair --key-name MyKeyPair32 | jq -r '.KeyMaterial' > ~/.ssh/id_rsa
+chmod 400 ~/.ssh/id_rsa
