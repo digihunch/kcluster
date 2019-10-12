@@ -1,2 +1,17 @@
 aws ec2 create-key-pair --key-name MyKeyPair32 | jq -r '.KeyMaterial' > ~/.ssh/id_rsa
 chmod 400 ~/.ssh/id_rsa
+
+
+## see generated private key
+aws ec2 create-key-pair --key-name MyKeyPair32 | jq -r '.KeyMaterial' > ~/.ssh/id_rsa
+
+## find self instance id
+
+#! /bin/bash
+MyInstID=`curl -s http://169.254.169.254/latest/meta-data/instance-id`
+
+
+## find the instance name by instancd-id
+aws ec2 describe-instances --instance-ids i-0106823365f0fcef3 | jq -r '.Reservations[].Instances[].Tags[] | select(.Key=="Name") |.Value'
+
+Name, aws:cloudformation:logical-id,aws:cloudformation:stack-id,aws:cloudformation:stack-name

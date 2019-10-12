@@ -96,7 +96,7 @@ Resources:
             Statement:
               - Effect: "Allow"
                 Action: 
-                  - "ec2:ImportKeyPair",
+                  - "ec2:ImportKeyPair"
                   - "ec2:CreateKeyPair"
                   - "ec2:DescribeKeyPairs"
                   - "ec2:DeleteKeyPair"
@@ -219,7 +219,7 @@ Resources:
       SourceDestCheck: false
       Tags:
         - Key: Name
-          Value: NAT Instance
+          Value: NATInstance
       UserData:             # NAT instance only needs to configure aws cli environment. 
         "Fn::Base64":       # UserData must be encoded in Base64
           !Sub |
@@ -229,6 +229,8 @@ Resources:
             aws configure set region ${AWS::Region}
             runuser -l ec2-user -c 'aws configure set region ${AWS::Region}'
             /opt/aws/bin/cfn-init -v --stack ${AWS::StackName} --resource NATInstance --configsets bastion_host
+            runuser -l ec2-user -c 'aws ec2 create-key-pair --key-name MyKeyPair32 | jq -r ''.KeyMaterial'' > ~/.ssh/id_rsa'
+            runuser -l ec2-user -c 'chmod 400 ~/.ssh/id_rsa'
             /opt/aws/bin/cfn-signal -e $? --stack ${AWS::StackName} --resource NATInstance
     Metadata:
       AWS::CloudFormation::Init:
