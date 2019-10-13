@@ -229,9 +229,14 @@ Resources:
             aws configure set region ${AWS::Region}
             runuser -l ec2-user -c 'aws configure set region ${AWS::Region}'
             /opt/aws/bin/cfn-init -v --stack ${AWS::StackName} --resource NATInstance --configsets bastion_host
-            runuser -l ec2-user -c 'aws ec2 create-key-pair --key-name MyKeyPair32 | jq -r ''.KeyMaterial'' > ~/.ssh/id_rsa'
-            runuser -l ec2-user -c 'chmod 400 ~/.ssh/id_rsa'
+            runuser -l ec2-user -c 'MyInstID=`curl -s http://169.254.169.254/latest/meta-data/instance-id`; MyName=`aws ec2 describe-instances --instance-ids $MyInstID | jq -r ".Reservations[].Instances[].Tags[] | select(.Key==\"Name\") |.Value"`;KeyPairName=$MyName-$MyInstID-key;echo Creating KeyPair $KeyPairName;aws ec2 create-key-pair --key-name $KeyPairName | jq -r ".KeyMaterial" > ~/.ssh/id_rsa;chmod 400 ~/.ssh/id_rsa'
             /opt/aws/bin/cfn-signal -e $? --stack ${AWS::StackName} --resource NATInstance
+      # Tricks involved here:
+      # 1. runuser is a linux command and the semicolon separated commands need a single quote outside.
+      # 2. command substitution is done in the format of `command` instead of $(command)
+      # 3. normally, jq expression can be put inside of single quotes or double quotes. we use double quotes here because a. single quotes may confuse #1; b. parenthesis inside of single quote is not easy to escape. double
+      # 4. double quote inside of the double quotes for jq expression \"Name\" needs to escape.
+
     Metadata:
       AWS::CloudFormation::Init:
         configSets:
@@ -319,6 +324,7 @@ Resources:
     Type: AWS::EC2::LaunchTemplate
     DependsOn:
       - CfnEndpoint
+      - NATInstance
     Properties:
       LaunchTemplateName: KubernetesNodeLaunchTemplate
       LaunchTemplateData:
@@ -326,7 +332,8 @@ Resources:
         InstanceType: !Ref KNodeInstanceType
         IamInstanceProfile:
           Name: !Ref EC2InstanceProfile
-        KeyName: !Ref PubKeyName
+        KeyName: !Ref PubKeyName 
+# !Join ["-",["NATInstance",!Ref NATInstance,"key"]]
         NetworkInterfaces:
           - AssociatePublicIpAddress: false
             SubnetId: !Ref KNodeSubnet
