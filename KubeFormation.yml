@@ -236,7 +236,6 @@ Resources:
       # 2. command substitution is done in the format of `command` instead of $(command)
       # 3. normally, jq expression can be put inside of single quotes or double quotes. we use double quotes here because a. single quotes may confuse #1; b. parenthesis inside of single quote is not easy to escape. double
       # 4. double quote inside of the double quotes for jq expression \"Name\" needs to escape.
-
     Metadata:
       AWS::CloudFormation::Init:
         configSets:
@@ -247,6 +246,10 @@ Resources:
             yum:
               jq: []
               ansible: []
+    CreationPolicy:
+      ResourceSignal:
+        Count: 1
+        Timeout: PT10M
   PrivateRouteTable:
     Type: AWS::EC2::RouteTable
     Properties:
@@ -332,7 +335,7 @@ Resources:
         InstanceType: !Ref KNodeInstanceType
         IamInstanceProfile:
           Name: !Ref EC2InstanceProfile
-        KeyName: !Ref PubKeyName 
+        KeyName: !Join ["-",["NATInstance",!Ref NATInstance,"key"]] 
 # !Join ["-",["NATInstance",!Ref NATInstance,"key"]]
         NetworkInterfaces:
           - AssociatePublicIpAddress: false
@@ -407,7 +410,7 @@ Resources:
         Version: !GetAtt KNodeLaunchTemplate.LatestVersionNumber
       Tags:
         - Key: Name
-          Value: Kubernetes Node
+          Value: KubernetesNode
 
 Outputs:
   BastionHostInfo:
