@@ -432,3 +432,9 @@ Outputs:
   KeyGenerated:
     Description: Public Key for NAT Instance
     Value: !Join ["-",["NATInstance",!Ref NATInstance,"key"]]
+  BackendNode1Info:
+    Description: Backend Node 1 Info
+    Value: !GetAtt KNodeBkndInst1.PrivateIp
+  BackendNode2Info:
+    Description: Backend Node 2 Info
+    Value: !GetAtt KNodeBkndInst2.PrivateIp
