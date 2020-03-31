@@ -109,7 +109,7 @@ Resources:
       Path: "/"
       Roles:
         - Ref: EC2InstanceIAMRole
-  KubeNodeStackVPC:
+  KNodeStackVPC:
     Type: AWS::EC2::VPC
     Properties:
        CidrBlock: 10.0.0.0/26
@@ -117,19 +117,19 @@ Resources:
        EnableDnsHostnames: true
        Tags:
         - Key: Name
-          Value: Solution Stack VPC
-  KubeNodeStackIGW:
+          Value: KStack VPC
+  KNodeStackIGW:
     Type: AWS::EC2::InternetGateway
-    DependsOn: KubeNodeStackVPC
+    DependsOn: KNodeStackVPC
   AttachGateway:
     Type: AWS::EC2::VPCGatewayAttachment
     Properties:
-      VpcId: !Ref KubeNodeStackVPC
-      InternetGatewayId: !Ref KubeNodeStackIGW
+      VpcId: !Ref KNodeStackVPC
+      InternetGatewayId: !Ref KNodeStackIGW
   PublicRouteTable:
     Type: AWS::EC2::RouteTable
     Properties:
-      VpcId: !Ref KubeNodeStackVPC
+      VpcId: !Ref KNodeStackVPC
       Tags:
        - Key: Name
          Value: Public Route Table
@@ -140,11 +140,11 @@ Resources:
     Properties:
       RouteTableId: !Ref PublicRouteTable
       DestinationCidrBlock: 0.0.0.0/0
-      GatewayId: !Ref KubeNodeStackIGW
+      GatewayId: !Ref KNodeStackIGW
   JumpHostSecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
-      VpcId: !Ref KubeNodeStackVPC
+      VpcId: !Ref KNodeStackVPC
       GroupDescription: Jumpbox Security Group
       SecurityGroupEgress:
       - CidrIp: 0.0.0.0/0
@@ -174,7 +174,7 @@ Resources:
   PublicSubnet:
     Type: AWS::EC2::Subnet
     Properties:
-      VpcId: !Ref KubeNodeStackVPC
+      VpcId: !Ref KNodeStackVPC
       CidrBlock: 10.0.0.0/28
       MapPublicIpOnLaunch: true
       AvailabilityZone:
@@ -187,7 +187,7 @@ Resources:
   KNodeSubnet:
     Type: AWS::EC2::Subnet
     Properties:
-      VpcId: !Ref KubeNodeStackVPC
+      VpcId: !Ref KNodeStackVPC
       CidrBlock: 10.0.0.16/28
       MapPublicIpOnLaunch: false
       AvailabilityZone:
@@ -253,7 +253,7 @@ Resources:
   PrivateRouteTable:
     Type: AWS::EC2::RouteTable
     Properties:
-      VpcId: !Ref KubeNodeStackVPC
+      VpcId: !Ref KNodeStackVPC
 
 # Once NAT Instance has been created, add route for private subnet to connect to outside through NAT instance.
   PrivateRoute1:
@@ -272,8 +272,8 @@ Resources:
   PrivateSecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
-      VpcId: !Ref KubeNodeStackVPC
-      GroupDescription: Private Security Group for kubernetes nodes
+      VpcId: !Ref KNodeStackVPC
+      GroupDescription: Private Security Group for knodes
       SecurityGroupEgress:
       - CidrIp: 0.0.0.0/0
         IpProtocol: -1
@@ -288,13 +288,13 @@ Resources:
         CidrIp: 0.0.0.0/0
       Tags:
         - Key: Name
-          Value: Private Security Group for kubernetes nodes
+          Value: Private Security Group for knodes
 
 # EndPoint Security Group (traffic through private link is encrypted with SSL)
   EndPointSecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
-      VpcId: !Ref KubeNodeStackVPC
+      VpcId: !Ref KNodeStackVPC
       GroupDescription: Traffic into VPC Endpoint
       SecurityGroupIngress:
       - IpProtocol: tcp
@@ -310,7 +310,7 @@ Resources:
   CfnEndpoint:
     Type: AWS::EC2::VPCEndpoint
     Properties:
-      VpcId: !Ref KubeNodeStackVPC
+      VpcId: !Ref KNodeStackVPC
       ServiceName: !Sub "com.amazonaws.${AWS::Region}.cloudformation"
       VpcEndpointType: "Interface"
       PrivateDnsEnabled: true
@@ -329,7 +329,7 @@ Resources:
       - CfnEndpoint
       - NATInstance
     Properties:
-      LaunchTemplateName: KubernetesNodeLaunchTemplate
+      LaunchTemplateName: KNodeLaunchTemplate
       LaunchTemplateData:
         ImageId: !FindInMap [RegionMap, !Ref "AWS::Region", AMALINUX]
         InstanceType: !Ref KNodeInstanceType
@@ -399,20 +399,36 @@ Resources:
             02_launch_install_coordinator:
               cwd: "/home/ec2-user"
               
-  KNodeInstance:
+  KNodeBkndInst1:
     DependsOn:
       - NATInstance
       - KNodeLaunchTemplate
     Type: AWS::EC2::Instance
     Properties:
       LaunchTemplate:
-        LaunchTemplateName: KubernetesNodeLaunchTemplate
+        LaunchTemplateName: KNodeLaunchTemplate
         Version: !GetAtt KNodeLaunchTemplate.LatestVersionNumber
       Tags:
         - Key: Name
-          Value: KubernetesNode
+          Value: Backend Instance 1
+
+  KNodeBkndInst2:
+    DependsOn:
+      - NATInstance
+      - KNodeLaunchTemplate
+    Type: AWS::EC2::Instance
+    Properties:
+      LaunchTemplate:
+        LaunchTemplateName: KNodeLaunchTemplate
+        Version: !GetAtt KNodeLaunchTemplate.LatestVersionNumber
+      Tags:
+        - Key: Name
+          Value: Backend Instance 2
 
 Outputs:
   BastionHostInfo:
     Description: Baston Host address
     Value: !Join ["", ["ssh ec2-user@", !GetAtt NATInstance.PublicIp]]
+  KeyGenerated:
+    Description: Public Key for NAT Instance
+    Value: !Join ["-",["NATInstance",!Ref NATInstance,"key"]]
