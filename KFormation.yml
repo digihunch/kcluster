@@ -1,4 +1,4 @@
-### Check README.md for details
+## Check README.md for details
 Metadata:
   AWS::CloudFormation::Interface:
     ParameterGroups:
@@ -23,54 +23,29 @@ Parameters:
   PubKeyName:
     Type: String
     Default: SolutionFormationPublicKey
+  PuppetRepoURL:
+    Type: String
+    Default: https://yum.puppet.com/puppet6/el/8/x86_64/
 
 Mappings:
+  # NATInstance images are based on Amazon Linux without systemd service
+  # Other images are based on Amazon Linux 2 which does have systemd service.
   RegionMap:
     us-east-1:
-      AMALINUX: ami-0080e4c5bc078760e
-      NATAMI: ami-00a9d4a05375b2763
+      AMALINUX: ami-0fc61db8544a617ed 
+      NATAMI: ami-06633932c6ba1188a
     us-east-2:
-      AMALINUX: ami-0cd3dfa4e37921605
-      NATAMI: ami-00d1f8201864cc10c
+      AMALINUX: ami-0e01ce4ee18447327 
+      NATAMI: ami-0ac473106208107b7
     us-west-1:
-      AMALINUX: ami-0ec6517f6edbf8044
-      NATAMI: ami-097ad469381034fa2
+      AMALINUX: ami-09a7fe78668f1e2c0 
+      NATAMI: ami-0f3ac6c6497b1d8cc
     us-west-2:
-      AMALINUX: ami-01e24be29428c15b2
-      NATAMI: ami-0b840e8a1ce4cdf15
-    sa-east-1:
-      AMALINUX: ami-05145e0b28ad8e0b2
-      NATAMI: ami-057f5d52ff7ae75ae
+      AMALINUX: ami-0ce21b51cb31a48b8 
+      NATAMI: ami-03ce13a1832ecdb15
     ca-central-1:
-      AMALINUX: ami-07423fb63ea0a0930
-      NATAMI: ami-0b32354309da5bba5
-    eu-west-1:
-      AMALINUX: ami-08935252a36e25f85
-      NATAMI: ami-024107e3e3217a248
-    eu-west-2:
-      AMALINUX: ami-01419b804382064e4
-      NATAMI: ami-0ca65a55561666293
-    eu-west-3:
-      AMALINUX: ami-0dd7e7ed60da8fb83
-      NATAMI: ami-0641e4dfc1427f114
-    eu-central-1:
-      AMALINUX: ami-0cfbf4f6db41068ac
-      NATAMI: ami-06a5303d47fbd8c60
-    ap-southeast-1:
-      AMALINUX: ami-05b3bcf7f311194b3
-      NATAMI: ami-01514bb1776d5c018
-    ap-southeast-2:
-      AMALINUX: ami-02fd0b06f06d93dfc
-      NATAMI: ami-062c04ec46aecd204
-    ap-northeast-1:
-      AMALINUX: ami-00a5245b4816c38e6
-      NATAMI: ami-00d29e4cb217ae06b
-    ap-northeast-2:
-      AMALINUX: ami-00dc207f8ba6dc919
-      NATAMI: ami-0d98591cbf9ef1ffd
-    ap-south-1:
-      AMALINUX: ami-0ad42f4f66f6c1cc9
-      NATAMI: ami-00b3aa8a93dd09c13
+      AMALINUX: ami-0bf54ac1b628cf143 
+      NATAMI: ami-071b25e94b8e27fbe
       
 Resources:
   EC2InstanceIAMRole:
@@ -141,7 +116,8 @@ Resources:
       RouteTableId: !Ref PublicRouteTable
       DestinationCidrBlock: 0.0.0.0/0
       GatewayId: !Ref KNodeStackIGW
-  JumpHostSecurityGroup:
+  # NATInstSecurityGroup must account for the Internet traffic from private instances
+  NATInstSecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
       VpcId: !Ref KNodeStackVPC
@@ -170,8 +146,8 @@ Resources:
         - Key: Name
           Value: Jumpbox Security Group 
 
-# NAT Instance is in public subnet; cluster nodes are in private subnet
-  PublicSubnet:
+# NAT Instance is in public subnet;
+  KPublicSubnet:
     Type: AWS::EC2::Subnet
     Properties:
       VpcId: !Ref KNodeStackVPC
@@ -184,7 +160,7 @@ Resources:
       Tags:
         - Key: Name
           Value: Public Subnet for Jumpbox
-  KNodeSubnet:
+  KPrivateSubnet:
     Type: AWS::EC2::Subnet
     Properties:
       VpcId: !Ref KNodeStackVPC
@@ -196,16 +172,17 @@ Resources:
           - Fn::GetAZs: ''
       Tags:
         - Key: Name
-          Value: KNode Subnet
+          Value: Private Subnet
 
-  PublicSubnetAssociationWithRouteTable:
+  KPublicSubnetAssociationWithRouteTable:
     Type: AWS::EC2::SubnetRouteTableAssociation
     Properties:
       RouteTableId: !Ref PublicRouteTable
-      SubnetId: !Ref PublicSubnet
+      SubnetId: !Ref KPublicSubnet
 
-# NAT instance is placed in public subnet and must be based off a NAT image (not a regular Amazon Linux Image!). Security group should allow ICPM and SourceDestCheck must be turned off.
+  # NAT instance is placed in public subnet and must be based off a NAT image (not a regular Amazon Linux Image!). Security group should allow ICPM and SourceDestCheck must be turned off.
 # The instruction also mentions that the route table pointing to NAT instance should be the main route table of VPC, it does not seem to matter though.
+  # NAT instance serves as jump host as well
   NATInstance:
     Type: AWS::EC2::Instance
     Properties:
@@ -213,9 +190,9 @@ Resources:
       InstanceType: !Ref NATInstanceType
       IamInstanceProfile: !Ref EC2InstanceProfile
       KeyName: !Ref PubKeyName
-      SubnetId:  !Ref PublicSubnet 
+      SubnetId:  !Ref KPublicSubnet 
       SecurityGroupIds:  
-        - !Ref JumpHostSecurityGroup
+        - !Ref NATInstSecurityGroup
       SourceDestCheck: false
       Tags:
         - Key: Name
@@ -245,16 +222,19 @@ Resources:
           packages:
             yum:
               jq: []
-              ansible: []
     CreationPolicy:
       ResourceSignal:
         Count: 1
         Timeout: PT10M
+
+
   PrivateRouteTable:
     Type: AWS::EC2::RouteTable
     Properties:
       VpcId: !Ref KNodeStackVPC
-
+      Tags:
+       - Key: Name
+         Value: Private Route Table
 # Once NAT Instance has been created, add route for private subnet to connect to outside through NAT instance.
   PrivateRoute1:
     Type: AWS::EC2::Route
@@ -262,11 +242,11 @@ Resources:
       RouteTableId: !Ref PrivateRouteTable
       DestinationCidrBlock: 0.0.0.0/0
       InstanceId: !Ref NATInstance
-  KNodeSubnetAssociationWithRouteTable:
+  KPrivateSubnetAssociationWithRouteTable:
     Type: AWS::EC2::SubnetRouteTableAssociation
     Properties:
       RouteTableId: !Ref PrivateRouteTable
-      SubnetId: !Ref KNodeSubnet
+      SubnetId: !Ref KPrivateSubnet
 
 # Private Security Group. More ports to open here based on k8s nodes.
   PrivateSecurityGroup:
@@ -315,31 +295,61 @@ Resources:
       VpcEndpointType: "Interface"
       PrivateDnsEnabled: true
       SubnetIds:
-        - !Ref KNodeSubnet
+        - !Ref KPrivateSubnet
       SecurityGroupIds:
         - !Ref EndPointSecurityGroup
+
+  PublicSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      VpcId: !Ref KNodeStackVPC
+      GroupDescription: Public Security Group
+      SecurityGroupEgress:
+      - CidrIp: 0.0.0.0/0
+        IpProtocol: -1
+      SecurityGroupIngress:
+      - IpProtocol: tcp
+        CidrIp: 0.0.0.0/0
+        ToPort: 22
+        FromPort: 22
+      - IpProtocol: tcp
+        CidrIp: 10.0.0.0/26
+        ToPort: 80
+        FromPort: 80
+      - IpProtocol: tcp
+        CidrIp: 0.0.0.0/0
+        ToPort: 443
+        FromPort: 443
+      - IpProtocol: icmp
+        FromPort: 8
+        ToPort: -1
+        CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Name
+          Value: Public Security Group 
+
+
 
 # calling cfn-init from user data allows the EC2 instance, upon launching, to execute configsets defined in metadata of the same resource
 # cfn-hup allows CloudFormation::Init to be executed upon stack updates (using triggers=post.update).
 
 # To troubleshoot AWS::CloudFormation::Init, manually run the following on the server with correct stack name
-  KNodeLaunchTemplate:
+  KPrivateNodeLaunchTemplate:
     Type: AWS::EC2::LaunchTemplate
     DependsOn:
       - CfnEndpoint
       - NATInstance
     Properties:
-      LaunchTemplateName: KNodeLaunchTemplate
+      LaunchTemplateName: KPrivateNodeLaunchTemplate
       LaunchTemplateData:
         ImageId: !FindInMap [RegionMap, !Ref "AWS::Region", AMALINUX]
         InstanceType: !Ref KNodeInstanceType
         IamInstanceProfile:
           Name: !Ref EC2InstanceProfile
         KeyName: !Join ["-",["NATInstance",!Ref NATInstance,"key"]] 
-# !Join ["-",["NATInstance",!Ref NATInstance,"key"]]
         NetworkInterfaces:
           - AssociatePublicIpAddress: false
-            SubnetId: !Ref KNodeSubnet
+            SubnetId: !Ref KPrivateSubnet
             DeviceIndex: 0
             Groups:
               - !Ref PrivateSecurityGroup
@@ -350,12 +360,22 @@ Resources:
               aws configure set region ${AWS::Region}
               runuser -l ec2-user -c 'aws configure set region ${AWS::Region}'
               yum update -y aws-cfn-bootstrap
+              yum -y install jq
               yum -y update
-              /opt/aws/bin/cfn-init -v --stack ${AWS::StackName} --resource KNodeLaunchTemplate --configsets kube_node_prep
+              cat <<EOF > /etc/yum.repos.d/puppet.repo
+              [puppet]
+              name=Repository for Puppet
+              baseurl=${PuppetRepoURL}
+              enabled=1
+              gpgcheck=0
+              EOF
+              MyInstID=`curl -s http://169.254.169.254/latest/meta-data/instance-id`;MyPuppetRole=`aws ec2 describe-tags --filters "Name=resource-id,Values=$MyInstID" | jq -r ".Tags[]|select(.Key==\"PuppetRole\")|.Value"`
+              yum -y install $MyPuppetRole
+              /opt/aws/bin/cfn-init -v --stack ${AWS::StackName} --resource KPrivateNodeLaunchTemplate --configsets knode_prep
     Metadata:
       AWS::CloudFormation::Init:
         configSets:
-          kube_node_prep:
+          knode_prep:
             - "configure_cfn"
             - "prepare_install"
             - "install_node"
@@ -365,8 +385,95 @@ Resources:
               content: !Sub |
                 [cfn-auto-reloader-hook]
                 triggers=post.update
-                path=Resources.KNodeLaunchTemplate.Metadata.AWS::CloudFormation::Init
-                action=/opt/aws/bin/cfn-init -v --stack ${AWS::StackName} --resource KNodeLaunchTemplate --configsets kube_node_prep
+                path=Resources.KPrivateNodeLaunchTemplate.Metadata.AWS::CloudFormation::Init
+                action=/opt/aws/bin/cfn-init -v --stack ${AWS::StackName} --resource KPrivateNodeLaunchTemplate --configsets knode_prep
+              mode: "000400"
+              owner: root
+              group: root
+            /etc/cfn/cfn-hup.conf:
+              content: !Sub |
+                [main]
+                stack=${AWS::StackId}
+                region=${AWS::Region}
+                verbose=true
+                interval=5
+              mode: "000400"
+              owner: root
+              group: root
+          services:
+            sysvinit:
+              cfn-hup:
+                enabled: "true"
+                ensureRunning: "true"
+                files:
+                  - "/etc/cfn/cfn-hup.conf"
+                  - "/etc/cfn/hooks.d/cfn-auto-reloader.conf"
+        prepare_install:
+          commands:
+            01_install_puppet_role:
+              command: "whoami"
+            #02_install_ansible:
+            #  command: "amazon-linux-extras install ansible2"
+            # In Amazon Linux 2 this is how you install ansible. Yum doesn't work for ansible installation
+        install_node:
+          commands:
+            01_print_nodes_info:
+              cwd: "/home/ec2-user"
+              command: /usr/bin/whoami
+            02_launch_install_coordinator:
+              cwd: "/home/ec2-user"
+              command: /usr/bin/whoami
+
+             
+  KPublicNodeLaunchTemplate:
+    Type: AWS::EC2::LaunchTemplate
+    DependsOn:
+      - NATInstance
+    Properties:
+      LaunchTemplateName: KPublicNodeLaunchTemplate
+      LaunchTemplateData:
+        ImageId: !FindInMap [RegionMap, !Ref "AWS::Region", AMALINUX]
+        InstanceType: !Ref KNodeInstanceType
+        IamInstanceProfile:
+          Name: !Ref EC2InstanceProfile
+        KeyName: !Join ["-",["NATInstance",!Ref NATInstance,"key"]] 
+        NetworkInterfaces:
+          - AssociatePublicIpAddress: true
+            SubnetId: !Ref KPublicSubnet
+            DeviceIndex: 0
+            Groups:
+              - !Ref PublicSecurityGroup
+        UserData:
+          "Fn::Base64":
+            !Sub |
+              #!/bin/bash
+              aws configure set region ${AWS::Region}
+              runuser -l ec2-user -c 'aws configure set region ${AWS::Region}'
+              yum update -y aws-cfn-bootstrap
+              yum -y update
+              cat <<EOF > /etc/yum.repos.d/puppet.repo
+              [puppet]
+              name=Repository for Puppet
+              baseurl=${PuppetRepoURL}
+              enabled=1
+              gpgcheck=0
+              EOF
+              /opt/aws/bin/cfn-init -v --stack ${AWS::StackName} --resource KPublicNodeLaunchTemplate --configsets knode_prep
+    Metadata:
+      AWS::CloudFormation::Init:
+        configSets:
+          knode_prep:
+            - "configure_cfn"
+            - "prepare_install"
+            - "install_node"
+        configure_cfn:
+          files:
+            /etc/cfn/hooks.d/cfn-auto-reloader.conf:
+              content: !Sub |
+                [cfn-auto-reloader-hook]
+                triggers=post.update
+                path=Resources.KPublicNodeLaunchTemplate.Metadata.AWS::CloudFormation::Init
+                action=/opt/aws/bin/cfn-init -v --stack ${AWS::StackName} --resource KPublicNodeLaunchTemplate --configsets knode_prep
               mode: "000400"
               owner: root
               group: root
@@ -392,49 +499,105 @@ Resources:
           packages:
             yum:
               jq: []
+              puppet-agent: []
         install_node:
           commands:
             01_print_nodes_info:
               cwd: "/home/ec2-user"
+              command: /usr/bin/whoami
             02_launch_install_coordinator:
               cwd: "/home/ec2-user"
-              
+              command: /usr/bin/whoami
+  
+  KNodePuppetMasterInst:
+    DependsOn:
+      - NATInstance
+      - KPrivateNodeLaunchTemplate
+    Type: AWS::EC2::Instance
+    Properties:
+      LaunchTemplate:
+        LaunchTemplateName: KPrivateNodeLaunchTemplate
+        Version: !GetAtt KPrivateNodeLaunchTemplate.LatestVersionNumber
+      Tags:
+        - Key: Name
+          Value: Puppet Master Intance
+        - Key: PuppetRole
+          Value: puppetserver
+
   KNodeBkndInst1:
     DependsOn:
       - NATInstance
-      - KNodeLaunchTemplate
+      - KPrivateNodeLaunchTemplate
     Type: AWS::EC2::Instance
     Properties:
       LaunchTemplate:
-        LaunchTemplateName: KNodeLaunchTemplate
-        Version: !GetAtt KNodeLaunchTemplate.LatestVersionNumber
+        LaunchTemplateName: KPrivateNodeLaunchTemplate
+        Version: !GetAtt KPrivateNodeLaunchTemplate.LatestVersionNumber
       Tags:
         - Key: Name
           Value: Backend Instance 1
+        - Key: PuppetRole
+          Value: puppet-agent
 
-  KNodeBkndInst2:
+#  KNodeBkndInst2:
+#    DependsOn:
+#      - NATInstance
+#      - KPrivateNodeLaunchTemplate
+#    Type: AWS::EC2::Instance
+#    Properties:
+#      LaunchTemplate:
+#        LaunchTemplateName: KPrivateNodeLaunchTemplate
+#        Version: !GetAtt KPrivateNodeLaunchTemplate.LatestVersionNumber
+#      Tags:
+#        - Key: Name
+#          Value: Backend Instance 2
+#
+  KNodeWebInst1:
     DependsOn:
       - NATInstance
-      - KNodeLaunchTemplate
+      - KPublicNodeLaunchTemplate
     Type: AWS::EC2::Instance
     Properties:
       LaunchTemplate:
-        LaunchTemplateName: KNodeLaunchTemplate
-        Version: !GetAtt KNodeLaunchTemplate.LatestVersionNumber
+        LaunchTemplateName: KPublicNodeLaunchTemplate
+        Version: !GetAtt KPublicNodeLaunchTemplate.LatestVersionNumber
       Tags:
         - Key: Name
-          Value: Backend Instance 2
+          Value: Web Instance 1
+
+#  KNodeWebInst2:
+#    DependsOn:
+#      - NATInstance
+#      - KPublicNodeLaunchTemplate
+#    Type: AWS::EC2::Instance
+#    Properties:
+#      LaunchTemplate:
+#        LaunchTemplateName: KPublicNodeLaunchTemplate
+#        Version: !GetAtt KPublicNodeLaunchTemplate.LatestVersionNumber
+#      Tags:
+#        - Key: Name
+#          Value: Web Instance 2
 
 Outputs:
   BastionHostInfo:
-    Description: Baston Host address
-    Value: !Join ["", ["ssh ec2-user@", !GetAtt NATInstance.PublicIp]]
+    Description: Bastion Host address
+    Value: !Join ["", ["ec2-user@", !GetAtt NATInstance.PublicIp]]
   KeyGenerated:
     Description: Public Key for NAT Instance
     Value: !Join ["-",["NATInstance",!Ref NATInstance,"key"]]
+  PuppetMasterNodeInfo:
+    Description: Puppet Master Node Info
+    Value: !GetAtt KNodePuppetMasterInst.PrivateDnsName
   BackendNode1Info:
     Description: Backend Node 1 Info
-    Value: !GetAtt KNodeBkndInst1.PrivateIp
-  BackendNode2Info:
-    Description: Backend Node 2 Info
-    Value: !GetAtt KNodeBkndInst2.PrivateIp
+    Value: !GetAtt KNodeBkndInst1.PrivateDnsName
+#  BackendNode2Info:
+#    Description: Backend Node 2 Info
+#    Value: !GetAtt KNodeBkndInst2.PrivateDnsName
+  NodeWebInst1Info:
+    Description: Web Node 1 Info
+    Value: !GetAtt KNodeWebInst1.PrivateDnsName
+#  NodeWebInst2Info:
+#    Description: Web Node 2 Info
+#    Value: !GetAtt KNodeWebInst2.PrivateDnsName
+
