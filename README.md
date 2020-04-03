@@ -113,10 +113,10 @@ Use KFormation.yml to create infrastructure and use describe-stacks command to o
    with the following content
    ```
    [local-amzn2-core]
-name=AmazonLinux 2 Core Local
-baseurl=http://privatedns.internal/amzn2-core/
-gpgcheck=0
-enabled=1
+   name=AmazonLinux 2 Core Local
+   baseurl=http://privatedns.internal/amzn2-core/
+   gpgcheck=0
+   enabled=1
    ```
 3. Confirm that local-amz2-core repo is listed when you run 
    ```sh
@@ -130,7 +130,7 @@ enabled=1
 
 
 
-# Minimalist deployment of Gitlab Community
+# Lab 2. Minimal deployment of Gitlab Community
 
 In this simple lab we install GitLab CE on an instance of T2 medium. Then create a porject on web portal and git clone it to a client.
 
