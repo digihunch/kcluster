@@ -23,6 +23,7 @@ aws cloudformation delete-stack --stack-name mykcluster
 Describe stack
 ```sh
 aws cloudformation describe-stacks --stack-name mykcluster
+aws cloudformation describe-stacks --stack-name mykcluster | jq ".Stacks[].Outputs[]"
 ```
 
 Delete key pair created during stack creation
