@@ -509,7 +509,7 @@ Resources:
               cwd: "/home/ec2-user"
               command: /usr/bin/whoami
   
-  KNodePuppetMasterInst:
+  KNodeMasterInst:
     DependsOn:
       - NATInstance
       - KPrivateNodeLaunchTemplate
@@ -586,8 +586,8 @@ Outputs:
     Description: Public Key for NAT Instance
     Value: !Join ["-",["NATInstance",!Ref NATInstance,"key"]]
   PuppetMasterNodeInfo:
-    Description: Puppet Master Node Info
-    Value: !GetAtt KNodePuppetMasterInst.PrivateDnsName
+    Description: Master Node Info
+    Value: !GetAtt KNodeMasterInst.PrivateDnsName
   BackendNode1Info:
     Description: Backend Node 1 Info
     Value: !GetAtt KNodeBkndInst1.PrivateDnsName
