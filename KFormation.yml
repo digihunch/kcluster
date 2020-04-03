@@ -313,7 +313,7 @@ Resources:
         ToPort: 22
         FromPort: 22
       - IpProtocol: tcp
-        CidrIp: 10.0.0.0/26
+        CidrIp: 0.0.0.0/0
         ToPort: 80
         FromPort: 80
       - IpProtocol: tcp
@@ -596,7 +596,7 @@ Outputs:
 #    Value: !GetAtt KNodeBkndInst2.PrivateDnsName
   NodeWebInst1Info:
     Description: Web Node 1 Info
-    Value: !GetAtt KNodeWebInst1.PrivateDnsName
+    Value: !Join [",",[!GetAtt KNodeWebInst1.PrivateDnsName,!GetAtt KNodeWebInst1.PublicIp, !GetAtt KNodeWebInst1.PublicDnsName]]
 #  NodeWebInst2Info:
 #    Description: Web Node 2 Info
 #    Value: !GetAtt KNodeWebInst2.PrivateDnsName
