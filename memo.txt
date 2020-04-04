@@ -11,6 +11,11 @@ aws ec2 create-key-pair --key-name MyKeyPair32 | jq -r '.KeyMaterial' > ~/.ssh/i
 MyInstID=`curl -s http://169.254.169.254/latest/meta-data/instance-id`
 
 
+## delete keys
+aws ec2 describe-key-pairs | jq -r ".[]" | grep KeyName | grep NAT | awk -F'[",]' '{print $4}' > /tmp/Key
+while read -r var; do aws ec2 delete-key-pair --key-name $var; done < /tmp/Key
+
+
 ## find the instance name by instancd-id
 aws ec2 describe-instances --instance-ids i-0106823365f0fcef3 | jq -r '.Reservations[].Instances[].Tags[] | select(.Key=="Name") |.Value'
 
