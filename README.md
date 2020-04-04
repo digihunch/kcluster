@@ -32,7 +32,6 @@ AWSCLI should be configured in local SSH client (access key, secret key, region 
 ```sh
 aws cloudformation create-stack --stack-name mykcluster --template-body file://KFormation.yml --capabilities CAPABILITY_NAMED_IAM
 ```
-
 - Describe stack
 ```sh
 aws cloudformation describe-stacks --stack-name mykcluster
@@ -44,6 +43,10 @@ The describe-stacks command returns hostname of the newly created instances.
 ```sh
 aws cloudformation delete-stack --stack-name mykcluster
 ```
+- List the stacks
+```sh
+aws cloudformation list-stacks --stack-status-filter DELETE_IN_PROGRESS CREATE_IN_PROGRESS CREATE_FAILED CREATE_COMPLETE
+```
 A keypar is created as part of stack creation for communication between bastion host and other servers. This key should be manually deleted after the lab. The key name is provided in stack output.
 ```sh
 aws ec2 delete-key-pair --key-name MyKeyPair
@@ -51,7 +54,69 @@ aws ec2 delete-key-pair --key-name MyKeyPair
 
 It is important to remember to tear down the stack after the lab or they will incur charges.
 
-# Lab 1. Create a local YUM repository server for Amazon Linux 2
+# Lab 1. Configure Puppet 
+
+In this lab we configure open-source Puppet 6, with the master server in privarte subnet. There are two agents: one is a web node in public subnet; the other a backend node in private subnet. The infrastructure-as-a-code configures puppet repo and installs the corresponding packages. 
+
+## Build out infrastructure
+
+Use KFormation.yml to create infrastructure and use describe-stacks command to obtain stack output. Then SSH to the Bastion Host.
+
+## Configure Server
+
+1. Set proper memory parameter in /etc/sysconfig/puppetserver. If the instance type is T2.small (with 2G memory) then it is recommended to set Xms and Xmx to 1g in the JAVA_ARGS line.
+2. Start puppet server process
+   ```sh
+   systemctl start puppetserver && systemctl status puppetserver
+   ```
+3. A puppet agent was also installed as dependency. The local agent needs to be configured correctly to connect to itself as server. 
+   ```sh
+   puppet config set server privatedns.puppetmaster.ec2.internal
+   ```
+
+## Configure Clients
+
+1. Configure server destination (same as the agent on server)
+   ```sh
+   puppet config set server privatedns.puppetmaster.ec2.internal
+   ```
+2. connect to server for the first time. The command will pick up server from the configuration in the previous step.
+   ```sh
+   puppet agent --waitforcert 60 --test
+   ```
+3. On the server side, list all request, then sign all of the pending request
+   ```sh
+   puppetserver ca list
+   puppetserver ca sign --certname connecting.agent.ec2.internal
+   ```
+4. Test connection
+   ```sh
+   puppet agent -t
+   ```
+The result should incidate the agent is connected to the server successfully.
+
+## Add Manifest on server
+
+1. Move web.pp and db.pp to the server at /etc/puppetlabs/code/environments/production/manifests/
+2. Note that in the manifest files, replace the node with the actual private DNS name.
+
+## Execute manifest from client
+
+1. Log into the backend node, run the following command the result should indicate the package is created
+   ```sh
+   puppet agent -t
+   ```
+2. Log into the web node, run the following command:
+   ```
+   puppet agent -t
+   ```
+3. On each node confirm the packages are installed correctly. On the web node, start httpd service:
+   ```
+   systemctl start httpd
+   ```
+4. Browse to the web node by public dns. Apache landing page should display.
+
+# Lab 2. Create a local YUM repository server for Amazon Linux 2
 
 In this lab, we will create a local YUM repository on KNodeWebInst1, and configure YUM client on KNodeBkndInst1. Then we confirm the YUM repo is correctly configured by using it to install a package.
 
@@ -59,26 +124,26 @@ In this lab, we will create a local YUM repository on KNodeWebInst1, and configu
 Use KFormation.yml to create infrastructure and use describe-stacks command to obtain stack output. Then SSH to the Bastion Host.
 
 ## Create YUM repo on WebInst1
-2. From Bastion Host SSH to WebInst1 by private DNS and run the followings to start nginx.
+1. From Bastion Host SSH to WebInst1 by private DNS and run the followings to start nginx.
    ```sh
    sudo amazon-linux-extras install nginx1.12
    sudo systemctl start nginx
    ```
-2. Once nginx is installed, browse by the public DNS address (port 80) and you should see nginx landing page.
-3. Configure local repo named amzn2-core and sync from the official source.
 
+2. Once nginx is installed, browse by the public DNS address (port 80) and you should see nginx landing page.
+
+3. Configure local repo named amzn2-core and sync from the official source.
    ```sh
    sudo yum install createrepo  yum-utils
    sudo mkdir -p /var/www/html/repos/amzn2-core
    sudo reposync -g -l -d -m --repoid=amzn2-core --newest-only --download-metadata --download_path=/var/www/html/repos/
    ```
-4. The official repo contains 8400+ packages and can take a few minutes to sync. Once completed, create new repodata for the local repo:
 
+4. The official repo contains 8400+ packages and can take a few minutes to sync. Once completed, create new repodata for the local repo:
    ```sh
    sudo createrepo -g comps.xml /var/www/html/repos/amzn2-core/
    ```
 5. Then reconfigure nginx by editing repos.conf
-
    ```sh
    sudo vim /etc/nginx/conf.d/repos.conf
    ```
@@ -130,30 +195,26 @@ Use KFormation.yml to create infrastructure and use describe-stacks command to o
 
 
 
-# Lab 2. Minimal deployment of Gitlab Community
+# Lab 3. Minimal deployment of Gitlab Community
 
 In this simple lab we install GitLab CE on an instance of T2 medium. Then create a porject on web portal and git clone it to a client.
 
 1. Configure gitlab repo using a provided script.
-
    ```sh
    curl -sS https://packages.gitlab.com/install/repositories/gitlab/gitlab-ce/script.rpm.sh | sudo bash
    ```
 
 2. Confirm gitlab repo is installed with "yum repolist". Then install Gitlab CE:
-
    ```sh
    sudo yum -y install gitlab-ce
    ```
-
    Open /etc/gitlab/gitlab.rb and confirm that external_url line already populated with public DNS. Browse to the public DNS address with plain HTTP and open the portal.
 
 3. Once at the portal, set password for root user and login. Create a new project with public visibility and initialize repository with README. Suppose project name is project1 and copy the link for git clone.
 
 4. Pick a server as client, run the following to clone directory to local:
-
    ```sh
    git clone http://ec2-34-207-137-79.compute-1.amazonaws.com/root/project1.git
    ```
-
 Note: this lab involves a lot of simplifications. In a real environment the browser traffic must be secured. This should also be deployed on a private instance although you will need port forwarding to browse to GitLab portal.
+

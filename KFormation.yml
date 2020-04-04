@@ -19,13 +19,14 @@ Parameters:
     Default: t2.micro
   KNodeInstanceType:
     Type: String
-    Default: t2.micro
+    Default: t2.small
   PubKeyName:
     Type: String
     Default: SolutionFormationPublicKey
-  PuppetRepoURL:
+  PuppetRepoRPM:
     Type: String
-    Default: https://yum.puppet.com/puppet6/el/8/x86_64/
+    Default: https://yum.puppet.com/puppet6-release-el-7.noarch.rpm
+    # Amazon Linux 2 should use el-7 packages
 
 Mappings:
   # NATInstance images are based on Amazon Linux without systemd service
@@ -173,7 +174,6 @@ Resources:
       Tags:
         - Key: Name
           Value: Private Subnet
-
   KPublicSubnetAssociationWithRouteTable:
     Type: AWS::EC2::SubnetRouteTableAssociation
     Properties:
@@ -227,7 +227,6 @@ Resources:
         Count: 1
         Timeout: PT10M
 
-
   PrivateRouteTable:
     Type: AWS::EC2::RouteTable
     Properties:
@@ -262,7 +261,11 @@ Resources:
         CidrIp: 0.0.0.0/0
         ToPort: 22
         FromPort: 22
-      - IpProtocol: icmp
+      - IpProtocol: tcp
+        CidrIp: 0.0.0.0/0
+        ToPort: 8140
+        FromPort: 8140
+     - IpProtocol: icmp
         FromPort: 8
         ToPort: -1
         CidrIp: 0.0.0.0/0
@@ -328,8 +331,6 @@ Resources:
         - Key: Name
           Value: Public Security Group 
 
-
-
 # calling cfn-init from user data allows the EC2 instance, upon launching, to execute configsets defined in metadata of the same resource
 # cfn-hup allows CloudFormation::Init to be executed upon stack updates (using triggers=post.update).
 
@@ -360,17 +361,11 @@ Resources:
               aws configure set region ${AWS::Region}
               runuser -l ec2-user -c 'aws configure set region ${AWS::Region}'
               yum update -y aws-cfn-bootstrap
-              yum -y install jq
               yum -y update
-              cat <<EOF > /etc/yum.repos.d/puppet.repo
-              [puppet]
-              name=Repository for Puppet
-              baseurl=${PuppetRepoURL}
-              enabled=1
-              gpgcheck=0
-              EOF
-              MyInstID=`curl -s http://169.254.169.254/latest/meta-data/instance-id`;MyPuppetRole=`aws ec2 describe-tags --filters "Name=resource-id,Values=$MyInstID" | jq -r ".Tags[]|select(.Key==\"PuppetRole\")|.Value"`
-              yum -y install $MyPuppetRole
+              yum -y install jq
+              MyInstID=`curl -s http://169.254.169.254/latest/meta-data/instance-id`
+              export MyPuppetRole=`aws ec2 describe-tags --filters "Name=resource-id,Values=$MyInstID" | jq -r ".Tags[]|select(.Key==\"PuppetRole\")|.Value"`
+              echo $MyPuppetRole > /tmp/MyPuppetRole
               /opt/aws/bin/cfn-init -v --stack ${AWS::StackName} --resource KPrivateNodeLaunchTemplate --configsets knode_prep
     Metadata:
       AWS::CloudFormation::Init:
@@ -409,9 +404,12 @@ Resources:
                   - "/etc/cfn/cfn-hup.conf"
                   - "/etc/cfn/hooks.d/cfn-auto-reloader.conf"
         prepare_install:
+          packages:
+            rpm: 
+              puppetrepo: !Ref PuppetRepoRPM
           commands:
             01_install_puppet_role:
-              command: "whoami"
+              command: "yum -y install `cat /tmp/MyPuppetRole`"  
             #02_install_ansible:
             #  command: "amazon-linux-extras install ansible2"
             # In Amazon Linux 2 this is how you install ansible. Yum doesn't work for ansible installation
@@ -420,10 +418,6 @@ Resources:
             01_print_nodes_info:
               cwd: "/home/ec2-user"
               command: /usr/bin/whoami
-            02_launch_install_coordinator:
-              cwd: "/home/ec2-user"
-              command: /usr/bin/whoami
-
              
   KPublicNodeLaunchTemplate:
     Type: AWS::EC2::LaunchTemplate
@@ -451,13 +445,6 @@ Resources:
               runuser -l ec2-user -c 'aws configure set region ${AWS::Region}'
               yum update -y aws-cfn-bootstrap
               yum -y update
-              cat <<EOF > /etc/yum.repos.d/puppet.repo
-              [puppet]
-              name=Repository for Puppet
-              baseurl=${PuppetRepoURL}
-              enabled=1
-              gpgcheck=0
-              EOF
               /opt/aws/bin/cfn-init -v --stack ${AWS::StackName} --resource KPublicNodeLaunchTemplate --configsets knode_prep
     Metadata:
       AWS::CloudFormation::Init:
@@ -497,15 +484,14 @@ Resources:
                   - "/etc/cfn/hooks.d/cfn-auto-reloader.conf"
         prepare_install:
           packages:
+            rpm:
+              puppetrepo: !Ref PuppetRepoRPM 
             yum:
               jq: []
               puppet-agent: []
         install_node:
           commands:
             01_print_nodes_info:
-              cwd: "/home/ec2-user"
-              command: /usr/bin/whoami
-            02_launch_install_coordinator:
               cwd: "/home/ec2-user"
               command: /usr/bin/whoami
   
@@ -539,19 +525,6 @@ Resources:
         - Key: PuppetRole
           Value: puppet-agent
 
-#  KNodeBkndInst2:
-#    DependsOn:
-#      - NATInstance
-#      - KPrivateNodeLaunchTemplate
-#    Type: AWS::EC2::Instance
-#    Properties:
-#      LaunchTemplate:
-#        LaunchTemplateName: KPrivateNodeLaunchTemplate
-#        Version: !GetAtt KPrivateNodeLaunchTemplate.LatestVersionNumber
-#      Tags:
-#        - Key: Name
-#          Value: Backend Instance 2
-#
   KNodeWebInst1:
     DependsOn:
       - NATInstance
@@ -564,19 +537,6 @@ Resources:
       Tags:
         - Key: Name
           Value: Web Instance 1
-
-#  KNodeWebInst2:
-#    DependsOn:
-#      - NATInstance
-#      - KPublicNodeLaunchTemplate
-#    Type: AWS::EC2::Instance
-#    Properties:
-#      LaunchTemplate:
-#        LaunchTemplateName: KPublicNodeLaunchTemplate
-#        Version: !GetAtt KPublicNodeLaunchTemplate.LatestVersionNumber
-#      Tags:
-#        - Key: Name
-#          Value: Web Instance 2
 
 Outputs:
   BastionHostInfo:
@@ -591,13 +551,7 @@ Outputs:
   BackendNode1Info:
     Description: Backend Node 1 Info
     Value: !GetAtt KNodeBkndInst1.PrivateDnsName
-#  BackendNode2Info:
-#    Description: Backend Node 2 Info
-#    Value: !GetAtt KNodeBkndInst2.PrivateDnsName
-  NodeWebInst1Info:
+  WebNode1Info:
     Description: Web Node 1 Info
     Value: !Join [",",[!GetAtt KNodeWebInst1.PrivateDnsName,!GetAtt KNodeWebInst1.PublicIp, !GetAtt KNodeWebInst1.PublicDnsName]]
-#  NodeWebInst2Info:
-#    Description: Web Node 2 Info
-#    Value: !GetAtt KNodeWebInst2.PrivateDnsName
 
